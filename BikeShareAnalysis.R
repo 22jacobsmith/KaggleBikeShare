@@ -40,14 +40,14 @@ bike_clean <- bike
 
 my_recipe <- recipe(count ~ ., data=bike) %>% # Set model formula
   step_time(datetime, features=c("hour")) %>% # create hour variable
-  step_select(-c(casual,registered, datetime)) #selects columns
-prepped_recipe <- prep(my_recipe) # Sets up the preprocessing using myData
-bake(prepped_recipe, new_data = bike_clean)
-bike_clean <- bake(prepped_recipe, new_data = bike_clean)
+  step_select(-c(casual,registered, datetime)) #exclude casual, registered, timestamp
+prepped_recipe <- prep(my_recipe) # Sets up
+bake(prepped_recipe, new_data = bike_clean) #bake the recipe
+bike_clean <- bake(prepped_recipe, new_data = bike_clean) # assign baked recipe to bike_clean
 
 # prepare the screenshot for uploading
 bike_clean %>% head(10)
-
+bike_clean %>% View()
 
 
 
