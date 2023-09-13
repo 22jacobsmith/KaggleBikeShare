@@ -25,8 +25,11 @@ bike_corr
 plot_bar(bike)
 plot_histogram(bike)
 
-# make season a factor
+# make categorical vars a factor
 bike$season <- as.factor(bike$season)
+bike$weather <- as.factor(bike$weather)
+bike$workingday <- as.factor(bike$workingday)
+bike$holiday <- as.factor(bike$holiday)
 summary(bike)
 
 # create 4 ggplots
@@ -49,3 +52,14 @@ plot2
 # prepare patchwork plot for saving
 
 (plot1 + plot2) / (plot3 + plot4)
+
+
+# can't include casual and registered. Predict total count
+# consider engineering "hour" from the timestamp
+
+summary(bike)
+
+# cleaning
+# filter, select, mutate, lubridate hour/minute/wday
+
+library(tidymodels)
