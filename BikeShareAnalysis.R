@@ -35,19 +35,19 @@ bike_clean <- bike
   
 # Feature engineering
 
-
+## use tidymodels recipe to create hour variable and remove casual
+## registered, and datetime column
 
 my_recipe <- recipe(count ~ ., data=bike) %>% # Set model formula
   step_time(datetime, features=c("hour")) %>% # create hour variable
   step_select(-c(casual,registered, datetime)) #selects columns
-prepped_recipe <- prep(my_recipe) # Sets up the preprocessing using myDataS
+prepped_recipe <- prep(my_recipe) # Sets up the preprocessing using myData
 bake(prepped_recipe, new_data = bike_clean)
 bike_clean <- bake(prepped_recipe, new_data = bike_clean)
 
-
+# prepare the screenshot for uploading
 bike_clean %>% head(10)
-bike_clean %>% View()
-bike %>% head(10)
+
 
 
 
