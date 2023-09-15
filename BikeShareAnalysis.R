@@ -14,7 +14,7 @@ library(tidymodels)
 
 setwd('C:/Users/22jac/OneDrive/Desktop/STAT348/KaggleBikeShare')
 bike <- vroom("train.csv")
-
+bike_test <- vroom("test.csv")
 # attach the bike data set
 attach(bike)
 
@@ -29,10 +29,17 @@ bike <- bike %>% mutate(workingday = factor(workingday))
 bike <- bike %>% mutate(weather = factor(weather))
 bike <- bike %>% mutate(season = factor(season))
 
+bike_test <- bike_test %>% mutate(weather = ifelse(weather == 4, 3, weather))
+# make holiday, workingday, weather, and season factor variables
+bike_test <- bike_test %>% mutate(holiday = factor(holiday))
+bike_test <- bike_test %>% mutate(workingday = factor(workingday))
+bike_test <- bike_test %>% mutate(weather = factor(weather))
+bike_test <- bike_test %>% mutate(season = factor(season))
+
 # initialize the bike_clean data set
 
 bike_clean <- bike
-  
+
 # Feature engineering
 
 ## use tidymodels recipe to create hour variable and remove casual
@@ -44,12 +51,7 @@ my_recipe <- recipe(count ~ ., data=bike) %>% # Set model formula
 prepped_recipe <- prep(my_recipe) # Sets up
 bake(prepped_recipe, new_data = bike_clean) #bake the recipe
 bike_clean <- bake(prepped_recipe, new_data = bike_clean) # assign baked recipe to bike_clean
-
+bake(prepped_recipe, new_data = bike_test)
 # prepare the screenshot for uploading
 bike_clean %>% head(10)
 bike_clean %>% View()
-
-
-
-
-
