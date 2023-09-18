@@ -9,12 +9,13 @@ library(vroom)
 library(skimr)
 library(DataExplorer)
 library(patchwork)
-
 library(tidymodels)
 library(vroom)
+
 # Read in the Bike Sharing demand data set, test and training data
 bike_train <- vroom("train.csv")
 bike_test <- vroom("test.csv")
+
 # Remove casual and registered from the data set
 bike_train <- bike_train %>%
   select(-casual, -registered)
@@ -26,8 +27,15 @@ bike_recipe <- recipe(count~., data=bike_train) %>%
   step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
   step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
   step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_poly(temp, degree = 2) %>%
+  step_poly(atemp, degree = 2) %>%
+  step_poly(humidity, degree = 2) %>%
+  step_poly(windspeed, degree = 2) %>%
   step_time(datetime, features="hour") %>% # split off the hour of day from datetime
   step_rm(datetime) # remove the original datetime column
+
+# bake the recipe, make sure it works on test and train set
+
 bike_recipe <- prep(bike_recipe)
 train_baked <- bake(bike_recipe, new_data = bike_train)
 test_baked <- bake(bike_recipe, new_data = bike_test)
@@ -50,21 +58,54 @@ extract_fit_engine(bike_workflow) %>%
 extract_fit_engine(bike_workflow) %>%
   tidy()
 
-## Get Predictions for test set AND format for Kaggle
+## Get Predictions for test set, format for Kaggle
 test_preds <- predict(bike_workflow, new_data = bike_test) %>%
   bind_cols(., bike_test) %>% # combine predicted values with test data
   select(datetime, .pred) %>% # select just datetime and predicted count
   rename(count=.pred) %>% #rename pred to count to fit Kaggle format
-  mutate(count=pmax(0, count)) %>% #pointwise max of (0, prediction)
-  mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
 ## Write prediction file to a CSV for submission
 vroom_write(x=test_preds, file="TestPreds.csv", delim=",")
 
+#####  ####### ###### ##### ###
+# try a Poisson regression model
+###### ###### ##### ###### ######
+
+library(poissonreg)
+
+pois_mod <- poisson_reg() %>%
+  set_engine("glm")
+
+bike_pois_workflow <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(pois_mod) %>%
+  fit(data = bike_train)
+
+bike_predictions_pois <-
+  predict(bike_pois_workflow, new_data = bike_test)
 
 
 
+# View the fitted poisson regression model
+extract_fit_engine(bike_pois_workflow) %>%
+  summary()
+# view the model in a tidy data frame
+extract_fit_engine(bike_pois_workflow) %>%
+  tidy()
+
+## Get Predictions for test set, format for Kaggle
+pois_test_preds <- predict(bike_pois_workflow, new_data = bike_test) %>%
+  bind_cols(., bike_test) %>% # combine predicted values with test data
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
 
 
+## Write prediction file to a CSV for submission
+vroom_write(x=pois_test_preds, file="PoisTestPreds.csv", delim=",")
 
-
-
+pois_test_preds
+test_preds
