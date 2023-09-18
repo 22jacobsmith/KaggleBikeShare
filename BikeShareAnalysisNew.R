@@ -22,7 +22,7 @@ bike_recipe <- prep(bike_recipe)
 train_baked <- bake(bike_recipe, new_data = bike_train)
 test_baked <- bake(bike_recipe, new_data = bike_test)
 
-### try a linear regression model
+### try a linear regression model ####
 
 my_mod <- linear_reg() %>% #type of model
   set_engine("lm") # engine = what r function to use
@@ -36,6 +36,10 @@ bike_workflow <- workflow() %>%
 # View the fitted linear regression model
 extract_fit_engine(bike_workflow) %>%
   summary()
+# view the model in a tidy data frame
+extract_fit_engine(bike_workflow) %>%
+  tidy()
+
 ## Get Predictions for test set AND format for Kaggle
 test_preds <- predict(bike_workflow, new_data = bike_test) %>%
   bind_cols(., bike_test) %>% # combine predicted values with test data

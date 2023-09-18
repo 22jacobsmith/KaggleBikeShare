@@ -9,49 +9,62 @@ library(vroom)
 library(skimr)
 library(DataExplorer)
 library(patchwork)
+
 library(tidymodels)
-# read in data
-
-setwd('C:/Users/22jac/OneDrive/Desktop/STAT348/KaggleBikeShare')
-bike <- vroom("train.csv")
+library(vroom)
+# Read in the Bike Sharing demand data set, test and training data
+bike_train <- vroom("train.csv")
 bike_test <- vroom("test.csv")
-# attach the bike data set
-attach(bike)
+# Remove casual and registered from the data set
+bike_train <- bike_train %>%
+  select(-casual, -registered)
 
-##### Data cleaning #####
+### Data cleaning, feature engineering
+bike_recipe <- recipe(count~., data=bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime) # remove the original datetime column
+bike_recipe <- prep(bike_recipe)
+train_baked <- bake(bike_recipe, new_data = bike_train)
+test_baked <- bake(bike_recipe, new_data = bike_test)
 
-# change weather level 4 (heavy snow) to 3 (light snow) since 
-# there is only one observation with level 4
-bike <- bike %>% mutate(weather = ifelse(weather == 4, 3, weather))
-# make holiday, workingday, weather, and season factor variables
-bike <- bike %>% mutate(holiday = factor(holiday))
-bike <- bike %>% mutate(workingday = factor(workingday))
-bike <- bike %>% mutate(weather = factor(weather))
-bike <- bike %>% mutate(season = factor(season))
+### try a linear regression model ####
 
-bike_test <- bike_test %>% mutate(weather = ifelse(weather == 4, 3, weather))
-# make holiday, workingday, weather, and season factor variables
-bike_test <- bike_test %>% mutate(holiday = factor(holiday))
-bike_test <- bike_test %>% mutate(workingday = factor(workingday))
-bike_test <- bike_test %>% mutate(weather = factor(weather))
-bike_test <- bike_test %>% mutate(season = factor(season))
+my_mod <- linear_reg() %>% #type of model
+  set_engine("lm") # engine = what r function to use
 
-# initialize the bike_clean data set
+bike_workflow <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(my_mod) %>%
+  fit(data = bike_train) # fit the workflow
 
-bike_clean <- bike
 
-# Feature engineering
+# View the fitted linear regression model
+extract_fit_engine(bike_workflow) %>%
+  summary()
+# view the model in a tidy data frame
+extract_fit_engine(bike_workflow) %>%
+  tidy()
 
-## use tidymodels recipe to create hour variable and remove casual
-## registered, and datetime column
+## Get Predictions for test set AND format for Kaggle
+test_preds <- predict(bike_workflow, new_data = bike_test) %>%
+  bind_cols(., bike_test) %>% # combine predicted values with test data
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% #pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
+## Write prediction file to a CSV for submission
+vroom_write(x=test_preds, file="TestPreds.csv", delim=",")
 
-my_recipe <- recipe(count ~ ., data=bike) %>% # Set model formula
-  step_time(datetime, features=c("hour")) %>% # create hour variable
-  step_select(-c(casual,registered, datetime)) #exclude casual, registered, timestamp
-prepped_recipe <- prep(my_recipe) # Sets up
-bake(prepped_recipe, new_data = bike_clean) #bake the recipe
-bike_clean <- bake(prepped_recipe, new_data = bike_clean) # assign baked recipe to bike_clean
-bake(prepped_recipe, new_data = bike_test)
-# prepare the screenshot for uploading
-bike_clean %>% head(10)
-bike_clean %>% View()
+
+
+
+
+
+
+
+
