@@ -109,3 +109,56 @@ vroom_write(x=pois_test_preds, file="PoisTestPreds.csv", delim=",")
 
 pois_test_preds
 test_preds
+
+
+
+############################
+### Penalized Regression ###
+############################
+
+library(tidymodels)
+library(poissonreg)
+
+log_bike_train <- bike_train %>% mutate(count = log(count))
+## create a new recipe for penalized regression
+bike_pen_recipe <-
+  recipe(count~., data=log_bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime) %>%
+  step_poly(temp, degree = 4) %>%
+  step_poly(atemp, degree = 4) %>%
+  step_poly(humidity, degree = 4) %>%
+  step_poly(windspeed, degree = 4) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+
+
+preg_model <- linear_reg(penalty = 0, mixture = 0) %>%
+  set_engine("glmnet")
+
+preg_wf <- workflow() %>%
+add_recipe(bike_pen_recipe) %>%
+add_model(preg_model) %>%
+fit(data=log_bike_train)
+
+#exp(predict(preg_wf, new_data=bike_test)) %>% View()
+extract_fit_engine(preg_wf) %>%
+  tidy()
+
+preg_preds <- exp(predict(preg_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=preg_preds, file="PRegTestPreds.csv", delim=",")
