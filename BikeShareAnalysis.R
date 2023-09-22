@@ -244,7 +244,7 @@ bike_recipe_rf <- prep(bike_recipe_rf)
 library(ranger)
 library(randomForest)
 my_mod <- rand_forest(engine = "ranger", mode = "regression",
-                      mtry = 9) # engine = what r function to use
+                      mtry = 9, trees = 5000) # engine = what r function to use
 
 bike_workflow_rf <- workflow() %>%
   add_recipe(bike_recipe_rf) %>%
