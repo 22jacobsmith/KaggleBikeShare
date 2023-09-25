@@ -167,6 +167,74 @@ preg_preds <- exp(predict(preg_wf, new_data=bike_test)) %>%
 vroom_write(x=preg_preds, file="PRegTestPreds.csv", delim=",")
 
 
+######## Tuning models for penalized regression
+
+library(tidymodels)
+library(poissonreg)
+
+# initialize the model
+tune_preg_model <- linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet")
+
+## set up workflow
+ 
+tune_preg_wf <- workflow() %>%
+  add_recipe(bike_pen_recipe) %>%
+  add_model(tune_preg_model)
+
+
+## get a grid of values to tune over
+tuning_grid <-
+  grid_regular(penalty(),
+               mixture(),
+               levels = 5)
+
+## split the data into K folds
+folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+
+## run the cross validation
+CV_results <-
+  tune_preg_wf %>% tune_grid(resamples = folds,
+                             grid = tuning_grid,
+                             metrics = metric_set(rmse, mae, rsq))
+
+## plot cv results
+collect_metrics(CV_results) %>%
+  filter(.metric == 'rmse') %>%
+  ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
+  geom_line()
+
+## find best tuning parameters
+
+best_tune <- CV_results %>%
+  select_best('rmse')
+
+## finalize workflow
+
+final_wf <-
+  tune_preg_wf %>%
+  finalize_workflow(best_tune) %>%
+  fit(data = log_bike_train)
+
+## get predictions on log scale
+
+final_wf %>% predict(new_data = bike_train)
+
+
+### export to kaggle
+tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=tune_preg_preds, file="TunePRegTestPreds.csv", delim=",")
+
+
 ##################################################
 ### Make the best model possible
 
