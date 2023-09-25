@@ -187,10 +187,10 @@ tune_preg_wf <- workflow() %>%
 tuning_grid <-
   grid_regular(penalty(),
                mixture(),
-               levels = 5)
+               levels = 10)
 
 ## split the data into K folds
-folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+folds <- vfold_cv(log_bike_train, v = 10, repeats = 1)
 
 ## run the cross validation
 CV_results <-
@@ -233,6 +233,9 @@ tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
 
 ## Write prediction file to a CSV for submission
 vroom_write(x=tune_preg_preds, file="TunePRegTestPreds.csv", delim=",")
+
+
+
 
 
 ##################################################
@@ -331,3 +334,36 @@ test_preds <- predict(bike_workflow_rf, new_data = bike_test) %>%
 
 ## Write prediction file to a CSV for submission
 vroom_write(x=test_preds, file="BestTestPreds.csv", delim=",")
+
+
+
+
+#### try an xgboost model
+
+
+library(xgboost)
+
+
+
+my_mod <- boost_tree() %>%
+  set_engine('xgboost') %>%
+  set_mode('regression') %>%
+  translate()
+
+bike_workflow_boost <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(my_mod) %>%
+  fit(data = bike_train) # fit the workflow
+
+
+
+## Get Predictions for test set, format for Kaggle
+test_preds <- predict(bike_workflow_boost, new_data = bike_test) %>%
+  bind_cols(., bike_test) %>% # combine predicted values with test data
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+## Write prediction file to a CSV for submission
+vroom_write(x=test_preds, file="BoostTestPreds.csv", delim=",")
