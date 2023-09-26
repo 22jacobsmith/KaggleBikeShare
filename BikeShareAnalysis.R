@@ -343,17 +343,43 @@ vroom_write(x=test_preds, file="BestTestPreds.csv", delim=",")
 
 library(xgboost)
 
+boost_rec <-
+  recipe(count~., data=bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime) %>%
+  # step_rm(holiday) %>%
+  # step_rm(workingday) %>%
+  #step_rm(atemp) %>%
+  # step_poly(temp, degree = 2) %>%
+  # step_poly(atemp, degree = 2) %>%
+  # step_poly(humidity, degree = 2) %>%
+  # step_poly(windspeed, degree = 2) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
 
+#boost_rec 
 
-my_mod <- boost_tree() %>%
+my_mod <- boost_tree(tree_depth = 10,
+                     learn_rate = 0.1,
+                     trees = 50) %>%
   set_engine('xgboost') %>%
   set_mode('regression') %>%
   translate()
 
 bike_workflow_boost <- workflow() %>%
-  add_recipe(bike_recipe) %>%
+  add_recipe(boost_rec) %>%
   add_model(my_mod) %>%
   fit(data = bike_train) # fit the workflow
+
+
+
+
+
 
 
 
