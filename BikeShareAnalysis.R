@@ -235,6 +235,79 @@ tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
 vroom_write(x=tune_preg_preds, file="TunePRegTestPreds.csv", delim=",")
 
 
+##### regression trees ############
+
+
+
+library(rpart)
+
+dtree_rec <-
+  recipe(count~., data=log_bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime)
+
+my_tree_mod <- decision_tree(tree_depth = tune(),
+                        cost_complexity = tune(),
+                        min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+                        
+### create a workflow with model & recipe
+
+dtree_wf <- workflow() %>%
+  add_recipe(dtree_rec) %>%
+  add_model(my_tree_mod)
+
+
+### set up a grid of tuning values
+
+tuning_grid <-
+  grid_regular(tree_depth(),
+               cost_complexity(),
+               min_n(),
+               levels = 10)
+
+### set up the k-fold cv
+folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+
+## run the cross validation
+CV_results <-
+  dtree_wf %>% tune_grid(resamples = folds,
+                             grid = tuning_grid,
+                             metrics = metric_set(rmse, mae, rsq))
+
+
+
+### find best tuning parameters
+best_tune <- CV_results %>%
+  select_best('rmse')
+
+## finalize workflow
+
+final_wf <-
+  dtree_wf %>%
+  finalize_workflow(best_tune) %>%
+  fit(data = log_bike_train)
+
+### predict
+
+tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=tune_preg_preds, file="DTreeTestPreds.csv", delim=",")
+
 
 
 
