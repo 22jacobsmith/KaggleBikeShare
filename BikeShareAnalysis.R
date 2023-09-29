@@ -296,7 +296,7 @@ final_wf <-
 
 ### predict
 
-tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
+dtree_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
   bind_cols(., bike_test) %>%
   select(datetime, .pred) %>% # select just datetime and predicted count
   rename(count=.pred) %>% #rename pred to count to fit Kaggle format
@@ -306,8 +306,83 @@ tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
 
 
 ## Write prediction file to a CSV for submission
-vroom_write(x=tune_preg_preds, file="DTreeTestPreds.csv", delim=",")
+vroom_write(x=dtree_preds, file="DTreeTestPreds.csv", delim=",")
 
+
+
+
+
+########## RANDOM FOREST MODELS ##################
+
+
+library(rpart)
+library(ranger)
+
+
+dtree_rec <-
+  recipe(count~., data=log_bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime)
+
+rf_mod <- rand_forest(mtry = tune(),
+                             min_n = tune(),
+                             trees = 500) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+### create a workflow with model & recipe
+
+rf_wf <- workflow() %>%
+  add_recipe(dtree_rec) %>%
+  add_model(rf_mod)
+
+
+### set up a grid of tuning values
+
+tuning_grid <-
+  grid_regular(mtry(range = c(1,9)),
+               min_n(),
+               levels = 5)
+
+### set up the k-fold cv
+folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+
+## run the cross validation
+rf_CV_results <-
+  rf_wf %>% tune_grid(resamples = folds,
+                         grid = tuning_grid,
+                         metrics = metric_set(rmse, mae, rsq))
+
+
+
+### find best tuning parameters
+rf_best_tune <- rf_CV_results %>%
+  select_best('rmse')
+
+## finalize workflow
+
+rf_final_wf <-
+  rf_wf %>%
+  finalize_workflow(rf_best_tune) %>%
+  fit(data = log_bike_train)
+
+### predict
+
+rf_preds <- exp(predict(rf_final_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=rf_preds, file="RFTestPreds.csv", delim=",")
 
 
 
@@ -388,7 +463,7 @@ bike_recipe_rf <- prep(bike_recipe_rf)
 library(ranger)
 library(randomForest)
 my_mod <- rand_forest(engine = "ranger", mode = "regression",
-                      mtry = 9, trees = 5000) # engine = what r function to use
+                      mtry = tune(), trees = tune()) # engine = what r function to use
 
 bike_workflow_rf <- workflow() %>%
   add_recipe(bike_recipe_rf) %>%
@@ -407,6 +482,69 @@ test_preds <- predict(bike_workflow_rf, new_data = bike_test) %>%
 
 ## Write prediction file to a CSV for submission
 vroom_write(x=test_preds, file="BestTestPreds.csv", delim=",")
+
+### try a tuned rf model #####################################
+library(tidymodels)
+library(rpart)
+library(tune)
+library(randomForest)
+rf_mod <- rand_forest(mtry = 3,
+                             min_n = tune(),
+                             trees = 1000) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+### create a workflow with model & recipe
+
+rf_wf <- workflow() %>%
+  add_recipe(dtree_rec) %>%
+  add_model(rf_mod)
+
+
+### set up a grid of tuning values
+
+tuning_grid <-
+  grid_regular(min_n(),
+              # mtry(),
+               levels = 5)
+
+
+### set up the k-fold cv
+folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+
+## run the cross validation
+CV_results <-
+  rf_wf %>% tune_grid(resamples = folds,
+                         grid = tuning_grid,
+                         metrics = metric_set(rmse, mae, rsq))
+
+
+
+### find best tuning parameters
+best_tune <- CV_results %>%
+  select_best('rmse')
+
+## finalize workflow
+
+final_wf <-
+  rf_wf %>%
+  finalize_workflow(best_tune) %>%
+  fit(data = log_bike_train)
+
+### predict
+
+tune_preg_preds <- exp(predict(final_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=tune_preg_preds, file="RFTestPreds.csv", delim=",")
+
 
 
 
