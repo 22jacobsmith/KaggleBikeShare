@@ -331,7 +331,7 @@ dtree_rec <-
 
 rf_mod <- rand_forest(mtry = tune(),
                              min_n = tune(),
-                             trees = 500) %>%
+                             trees = 1000) %>%
   set_engine("ranger") %>%
   set_mode("regression")
 
@@ -347,7 +347,7 @@ rf_wf <- workflow() %>%
 tuning_grid <-
   grid_regular(mtry(range = c(1,9)),
                min_n(),
-               levels = 5)
+               levels = 10)
 
 ### set up the k-fold cv
 folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
@@ -384,7 +384,7 @@ rf_preds <- exp(predict(rf_final_wf, new_data=bike_test)) %>%
 ## Write prediction file to a CSV for submission
 vroom_write(x=rf_preds, file="RFTestPreds.csv", delim=",")
 
-
+rf_preds %>% View()
 
 ##################################################
 ### Make the best model possible
