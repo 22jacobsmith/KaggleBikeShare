@@ -563,6 +563,128 @@ stacked_preds <- predict(stack_mod, new_data=bike_test) %>%
 ## Write prediction file to a CSV for submission
 vroom_write(x=stacked_preds, file="stackTestPreds.csv", delim=",")
 
+
+## try just stacking d trees
+
+
+my_stack2 <-
+  stacks() %>%
+  add_candidates(dtree_models)
+
+stack_mod2 <-
+  my_stack %>%
+  blend_predictions() %>%
+  fit_members()
+
+#predict(stack_mod, new_data = bike_test)
+
+
+stacked_preds2 <- predict(stack_mod2, new_data=bike_test) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=stacked_preds2, file="stackTestPreds2.csv", delim=",")
+
+
+################# try stacking just rf models ##################################
+
+library(rpart)
+library(ranger)
+log_bike_train <- bike_train %>% mutate(count = log(count))
+rf_rec <-
+  recipe(count~., data=log_bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime)
+
+rf_mod <- rand_forest(mtry = tune(),
+                      min_n = tune(),
+                      trees = 1000) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+### create a workflow with model & recipe
+
+rf_wf <- workflow() %>%
+  add_recipe(rf_rec) %>%
+  add_model(rf_mod)
+
+
+### set up a grid of tuning values
+
+rf_tuning_grid <-
+  grid_regular(mtry(range = c(1,9)),
+               min_n(),
+               levels = 5)
+
+### set up the k-fold cv
+folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+
+## run the cross validation
+rf_CV_results <-
+  rf_wf %>% tune_grid(resamples = folds,
+                      grid = rf_tuning_grid,
+                      metrics = metric_set(rmse, mae, rsq),
+                      control = untuned_model)
+
+
+
+my_stack3 <-
+  stacks() %>%
+  add_candidates(preg_models) %>%
+  add_candidates(dtree_models) %>%
+  add_candidates(lin_reg_model)
+
+stack_mod3 <-
+  my_stack %>%
+  blend_predictions() %>%
+  fit_members()
+
+#predict(stack_mod, new_data = bike_test)
+
+
+stacked_preds3 <- predict(stack_mod3, new_data=bike_test) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=stacked_preds3, file="stackTestPreds3.csv", delim=",")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ##################################################
 ### Make the best model possible
 
