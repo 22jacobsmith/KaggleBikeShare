@@ -386,6 +386,183 @@ vroom_write(x=rf_preds, file="RFTestPreds.csv", delim=",")
 
 rf_preds %>% View()
 
+
+
+
+########## STACKING ###############
+
+
+## stacking many models can outperform the base learners. Performs best
+## for uncorrelated predictions
+
+library(stacks)
+
+
+##### set up recipe
+
+# Read in the Bike Sharing demand data set, test and training data
+bike_train <- vroom("train.csv")
+bike_test <- vroom("test.csv")
+
+# Remove casual and registered from the data set
+bike_train <- bike_train %>%
+  select(-casual, -registered)
+
+### Data cleaning, feature engineering
+bike_recipe <- recipe(count~., data=bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_poly(temp, degree = 2) %>%
+  step_poly(atemp, degree = 2) %>%
+  step_poly(humidity, degree = 2) %>%
+  step_poly(windspeed, degree = 2) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime) %>% # remove the original datetime column
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+## cv folds
+
+folds <- vfold_cv(bike_train, v = 5)
+
+
+## control settings for stacking models
+untuned_model <- control_stack_grid()
+tuned_model <- control_stack_resamples()
+
+
+
+
+
+
+### penalized regression model
+
+
+
+
+
+# Penalized regression model10
+preg_model <- linear_reg(penalty=tune(),
+                         mixture=tune()) %>% #Set model and tuning
+  set_engine("glmnet") # Function to fit in R
+
+preg_wf <-
+  workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(preg_model)
+
+preg_tuning_grid <- grid_regular(penalty(),
+                                 mixture(),
+                                 levels = 5) ## L^2 total tuning possibilities
+
+
+## Run the CV
+preg_models <- preg_wf %>%
+tune_grid(resamples=folds,
+          grid=preg_tuning_grid,
+          metrics=metric_set(rmse, mae, rsq),
+          control = untuned_model) # including the control grid in the tuning ensures you can
+# call on it later in the stacked model
+
+
+### set up stacked linear model ###
+
+lin_model <- linear_reg() %>%
+  set_engine("lm")
+
+
+## set up workflow
+linreg_wf <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(lin_model)
+
+
+## fit to folds
+lin_reg_model <-
+  fit_resamples(linreg_wf,
+                resamples = folds,
+                metrics = metric_set(rmse),
+                control = tuned_model)
+
+
+### add a decision tree to the stack
+library(rpart)
+
+dtree_rec <-
+  recipe(count~., data=bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime)
+
+
+
+
+my_tree_mod <- decision_tree(tree_depth = tune(),
+                             cost_complexity = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+
+### create a workflow with model & recipe
+
+dtree_wf <- workflow() %>%
+  add_recipe(dtree_rec) %>%
+  add_model(my_tree_mod)
+
+
+### set up a grid of tuning values
+
+dt_tuning_grid <-
+  grid_regular(tree_depth(),
+               cost_complexity(),
+
+               levels = 5)
+
+
+
+
+## Run the CV
+dtree_models <- dtree_wf %>%
+  tune_grid(resamples=folds,
+            grid=dt_tuning_grid,
+            metrics=metric_set(rmse, mae, rsq),
+            control = untuned_model) # including the control grid in the tuning ensures you can
+# call on it later in the stacked model
+
+
+
+
+my_stack <-
+  stacks() %>%
+  add_candidates(preg_models) %>%
+  add_candidates(dtree_models) %>%
+  add_candidates(lin_reg_model)
+
+stack_mod <-
+  my_stack %>%
+  blend_predictions() %>%
+  fit_members()
+
+#predict(stack_mod, new_data = bike_test)
+
+
+stacked_preds <- predict(stack_mod, new_data=bike_test) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=stacked_preds, file="stackTestPreds.csv", delim=",")
+
 ##################################################
 ### Make the best model possible
 
