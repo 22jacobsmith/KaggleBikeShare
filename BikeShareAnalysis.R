@@ -707,6 +707,115 @@ knn_preds <- exp(predict(knn_final_wf, new_data=bike_test)) %>%
 vroom_write(x=knn_preds, file="KNNRegTestPreds.csv", delim=",")
 
 
+### try an xgboost model
+
+
+
+boost_rec <-
+  recipe(count~., data=log_bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  step_rm(datetime) %>%
+  step_dummy(all_nominal_predictors())
+
+boost_mod <- boost_tree(mode = 'regression',
+                            engine = 'xgboost',
+                        tree_depth = tune(),
+                        learn_rate = tune(),
+                        trees = tune())
+
+### create a workflow with model & recipe
+
+boost_wf <- workflow() %>%
+  add_recipe(boost_rec) %>%
+  add_model(boost_mod)
+
+# run the CV
+
+boost_tuning_grid <-
+  grid_regular(tree_depth(),
+               learn_rate(),
+               trees(),
+               levels = 5)
+
+### set up the k-fold cv
+folds <- vfold_cv(log_bike_train, v = 5, repeats = 1)
+
+## run the cross validation
+boost_CV_results <-
+  boost_wf %>% tune_grid(resamples = folds,
+                      grid = boost_tuning_grid,
+                      metrics = metric_set(rmse, mae, rsq))
+
+
+### find best tuning parameters
+best_tune <- boost_CV_results %>%
+  select_best('rmse')
+
+## finalize workflow
+
+boost_final_wf <-
+  boost_wf %>%
+  finalize_workflow(best_tune) %>%
+  fit(data = log_bike_train)
+
+
+### predict
+
+boost_preds <- exp(predict(boost_final_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=boost_preds, file="xgBoostTestPreds.csv", delim=",")
+
+
+
+
+
+############ try an auto_ml model
+library(agua)
+library(h2o)
+
+h2o.init()
+
+
+
+
+auto_mod <-
+  auto_ml(mode = "regression", engine = "h2o")
+
+auto_wf <-
+  workflow() %>%
+  add_recipe(boost_rec) %>%
+  add_model(auto_mod)
+
+auto_final_wf <-
+  auto_wf %>%
+  fit(data = log_bike_train)
+
+
+### predict
+
+auto_preds <- exp(predict(auto_final_wf, new_data=bike_test)) %>%
+  bind_cols(., bike_test) %>%
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+
+## Write prediction file to a CSV for submission
+vroom_write(x=auto_preds, file="AutoMLTestPreds.csv", delim=",")
 
 
 
@@ -885,13 +994,14 @@ vroom_write(x=tune_preg_preds, file="RFTestPreds.csv", delim=",")
 library(xgboost)
 
 boost_rec <-
-  recipe(count~., data=bike_train) %>%
+  recipe(count~., data=log_bike_train) %>%
   step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
   step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
   step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
   step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
   step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
   step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  #step_mutate(datetime_hour = factor(datetime_hour)) %>% 
   step_rm(datetime) %>%
   # step_rm(holiday) %>%
   # step_rm(workingday) %>%
@@ -900,22 +1010,20 @@ boost_rec <-
   # step_poly(atemp, degree = 2) %>%
   # step_poly(humidity, degree = 2) %>%
   # step_poly(windspeed, degree = 2) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors())
+  step_dummy(all_nominal_predictors())
 
 #boost_rec 
 
-my_mod <- boost_tree(tree_depth = 10,
+my_mod <- boost_tree(tree_depth = 3,
                      learn_rate = 0.1,
-                     trees = 50) %>%
+                     trees = 750) %>%
   set_engine('xgboost') %>%
-  set_mode('regression') %>%
-  translate()
+  set_mode('regression')
 
 bike_workflow_boost <- workflow() %>%
   add_recipe(boost_rec) %>%
   add_model(my_mod) %>%
-  fit(data = bike_train) # fit the workflow
+  fit(data = log_bike_train) # fit the workflow
 
 
 
@@ -925,7 +1033,7 @@ bike_workflow_boost <- workflow() %>%
 
 
 ## Get Predictions for test set, format for Kaggle
-test_preds <- predict(bike_workflow_boost, new_data = bike_test) %>%
+test_preds <- exp(predict(bike_workflow_boost, new_data = bike_test)) %>%
   bind_cols(., bike_test) %>% # combine predicted values with test data
   select(datetime, .pred) %>% # select just datetime and predicted count
   rename(count=.pred) %>% #rename pred to count to fit Kaggle format
@@ -934,3 +1042,69 @@ test_preds <- predict(bike_workflow_boost, new_data = bike_test) %>%
 
 ## Write prediction file to a CSV for submission
 vroom_write(x=test_preds, file="BoostTestPreds.csv", delim=",")
+
+
+
+
+#### try a bart model
+
+library(tidymodels)
+library(dbarts)
+library(parsnip)
+
+bart_rec <-
+  recipe(count~., data=log_bike_train) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather = factor(weather, levels = 1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_mutate(season = factor(season, levels = 1:4, labels=c("Spring", "Summer", "Fall", "Winter"))) %>%
+  step_mutate(holiday=factor(holiday, levels=c(0,1))) %>%
+  step_mutate(workingday=factor(workingday,levels=c(0,1))) %>%
+  step_time(datetime, features="hour") %>% # split off the hour of day from datetime
+  #step_mutate(datetime_hour = factor(datetime_hour)) %>% 
+  step_rm(datetime) %>%
+  # step_rm(holiday) %>%
+  # step_rm(workingday) %>%
+  #step_rm(atemp) %>%
+  # step_poly(temp, degree = 2) %>%
+  # step_poly(atemp, degree = 2) %>%
+  # step_poly(humidity, degree = 2) %>%
+  # step_poly(windspeed, degree = 2) %>%
+  step_dummy(all_nominal_predictors())
+
+
+
+my_mod <- bart(
+  trees = integer(1),
+  prior_terminal_node_coef = double(1),
+  prior_terminal_node_expo = double(1),
+  prior_outcome_range = double(1)
+) %>% 
+  set_engine("dbarts") %>% 
+  set_mode("regression") %>% 
+  translate()
+
+bike_workflow_boost <- workflow() %>%
+  add_recipe(bart_rec) %>%
+  add_model(my_mod) %>%
+  fit(data = log_bike_train) # fit the workflow
+
+
+
+
+
+
+
+
+## Get Predictions for test set, format for Kaggle
+test_preds <- exp(predict(bike_workflow_boost, new_data = bike_test)) %>%
+  bind_cols(., bike_test) %>% # combine predicted values with test data
+  select(datetime, .pred) %>% # select just datetime and predicted count
+  rename(count=.pred) %>% #rename pred to count to fit Kaggle format
+  mutate(count=pmax(0, count)) %>% # pointwise max of (0, prediction)
+  mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
+
+## Write prediction file to a CSV for submission
+vroom_write(x=test_preds, file="BoostTestPreds.csv", delim=",")
+
+
+head(log_bike_train)
