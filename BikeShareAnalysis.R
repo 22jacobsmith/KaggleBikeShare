@@ -10,6 +10,7 @@ library(skimr)
 library(DataExplorer)
 library(patchwork)
 library(tidymodels)
+
 library(vroom)
 
 # Read in the Bike Sharing demand data set, test and training data
@@ -1016,7 +1017,7 @@ boost_rec <-
 
 my_mod <- boost_tree(tree_depth = 3,
                      learn_rate = 0.1,
-                     trees = 750) %>%
+                     trees = 700) %>%
   set_engine('xgboost') %>%
   set_mode('regression')
 
@@ -1052,6 +1053,9 @@ library(tidymodels)
 library(dbarts)
 library(parsnip)
 
+log_bike_train <- bike_train %>% mutate(count = log(count))
+
+
 bart_rec <-
   recipe(count~., data=log_bike_train) %>%
   step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
@@ -1074,16 +1078,13 @@ bart_rec <-
 
 
 my_mod <- bart(
-  trees = integer(1),
-  prior_terminal_node_coef = double(1),
-  prior_terminal_node_expo = double(1),
-  prior_outcome_range = double(1)
+  trees = 15
 ) %>% 
   set_engine("dbarts") %>% 
   set_mode("regression") %>% 
   translate()
 
-bike_workflow_boost <- workflow() %>%
+bike_workflow_bart <- workflow() %>%
   add_recipe(bart_rec) %>%
   add_model(my_mod) %>%
   fit(data = log_bike_train) # fit the workflow
@@ -1096,7 +1097,7 @@ bike_workflow_boost <- workflow() %>%
 
 
 ## Get Predictions for test set, format for Kaggle
-test_preds <- exp(predict(bike_workflow_boost, new_data = bike_test)) %>%
+test_preds <- exp(predict(bike_workflow_bart, new_data = bike_test)) %>%
   bind_cols(., bike_test) %>% # combine predicted values with test data
   select(datetime, .pred) %>% # select just datetime and predicted count
   rename(count=.pred) %>% #rename pred to count to fit Kaggle format
@@ -1104,7 +1105,6 @@ test_preds <- exp(predict(bike_workflow_boost, new_data = bike_test)) %>%
   mutate(datetime=as.character(format(datetime))) #needed for right format to upload to Kaggle
 
 ## Write prediction file to a CSV for submission
-vroom_write(x=test_preds, file="BoostTestPreds.csv", delim=",")
+vroom_write(x=test_preds, file="BARTTestPreds.csv", delim=",")
 
 
-head(log_bike_train)
